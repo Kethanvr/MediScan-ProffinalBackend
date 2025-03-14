@@ -1,39 +1,62 @@
-import jwt from "jsonwebtoken";
+import {
+  verifyAccessToken,
+  verifyRefreshToken,
+  generateAccessToken,
+} from "../utils/tokens.js";
 import User from "../models/User.js";
+import ApiError from "../utils/ApiError.js";
+import ApiResponse from "../utils/ApiResponce.js";
 
 export const protect = async (req, res, next) => {
   try {
-    let token;
+    const accessToken = req.headers.authorization?.split(" ")[1];
+    const refreshToken = req.cookies?.refreshToken;
 
-    if (req.headers.authorization?.startsWith("Bearer")) {
-      token = req.headers.authorization.split(" ")[1];
+    if (!accessToken) {
+      throw new ApiError(401, "Access token required");
     }
 
-    if (!token) {
-      return res.status(401).json({ message: "Not authorized, no token" });
+    // Verify access token
+    const decodedAccess = verifyAccessToken(accessToken);
+    if (decodedAccess) {
+      const user = await User.findById(decodedAccess.id).select("-password");
+      if (!user) {
+        throw new ApiError(401, "User not found");
+      }
+      req.user = user;
+      return next();
     }
 
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // Get user from token
-    req.user = await User.findById(decoded.id).select("-password");
-
-    if (!req.user) {
-      return res.status(401).json({ message: "User not found" });
+    // If access token is invalid, check refresh token
+    if (!refreshToken) {
+      throw new ApiError(401, "Please login again");
     }
 
+    const decodedRefresh = verifyRefreshToken(refreshToken);
+    if (!decodedRefresh) {
+      throw new ApiError(401, "Invalid refresh token");
+    }
+
+    // Get user and generate new access token
+    const user = await User.findById(decodedRefresh.id).select("-password");
+    if (!user) {
+      throw new ApiError(401, "User not found");
+    }
+
+    const newAccessToken = generateAccessToken(user._id);
+    res.setHeader("Authorization", `Bearer ${newAccessToken}`);
+
+    req.user = user;
     next();
   } catch (error) {
-    res.status(401).json({ message: "Not authorized, token failed" });
+    next(error);
   }
 };
 
 // Admin middleware
 export const admin = (req, res, next) => {
-  if (req.user && req.user.role === "admin") {
-    next();
-  } else {
-    res.status(401).json({ message: "Not authorized as admin" });
+  if (req.user?.role !== "admin") {
+    throw new ApiError(403, "Not authorized as admin");
   }
+  next();
 };
