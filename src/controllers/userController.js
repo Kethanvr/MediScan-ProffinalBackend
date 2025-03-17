@@ -107,30 +107,9 @@ export const getProfileWithData = async (req, res, next) => {
 
 // Update user profile
 export const updateProfile = asyncHandler(async (req, res) => {
-  const allowedUpdates = [
-    "username",
-    "email",
-    "phone",
-    "full_name",
-    "profile",
-    "preferences",
-  ];
-
   // Validate request body
   if (!req.body || Object.keys(req.body).length === 0) {
     throw new ApiError(400, "Update data is required");
-  }
-
-  const updates = Object.keys(req.body);
-  const isValidOperation = updates.every((update) =>
-    allowedUpdates.includes(update)
-  );
-
-  if (!isValidOperation) {
-    throw new ApiError(
-      400,
-      `Invalid updates. Allowed fields: ${allowedUpdates.join(", ")}`
-    );
   }
 
   const user = await User.findById(req.user._id);
@@ -138,36 +117,64 @@ export const updateProfile = asyncHandler(async (req, res) => {
     throw new ApiError(404, "User not found");
   }
 
-  // If updating username, check if it's unique
-  if (req.body.username && req.body.username !== user.username) {
-    const existingUser = await User.findOne({ username: req.body.username });
+  // Extract fields from request body
+  const {
+    firstName,
+    lastName,
+    email,
+    phone,
+    location,
+    health,
+    emergencyContact,
+  } = req.body;
+
+  // Update basic fields
+  if (firstName) user.firstName = firstName;
+  if (lastName) user.lastName = lastName;
+  if (phone) user.phone = phone;
+
+  // Update email if changed and not already taken
+  if (email && email !== user.email) {
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
-      throw new ApiError(400, "Username already taken");
+      throw new ApiError(400, "Email already in use");
     }
+    user.email = email;
   }
 
-  // Apply updates
-  updates.forEach((update) => {
-    if (update === "full_name") {
-      const [firstName, ...lastNameParts] = req.body.full_name.split(" ");
-      user.firstName = firstName;
-      user.lastName = lastNameParts.join(" ");
-    } else {
-      user[update] = req.body[update];
-    }
-  });
+  // Update profile fields
+  if (!user.profile) user.profile = {};
 
-  try {
-    await user.save();
-    res.json(
-      new ApiResponce(200, "Profile updated successfully", user.getProfile())
+  if (location) {
+    if (!user.profile.address) user.profile.address = {};
+    user.profile.address.city = location;
+  }
+
+  // Update health information
+  if (health) {
+    if (health.bloodType) user.profile.bloodGroup = health.bloodType;
+    if (health.height) user.profile.height = health.height;
+    if (health.weight) user.profile.weight = health.weight;
+    if (health.allergies) user.profile.allergies = health.allergies;
+    if (health.medications) user.profile.chronicConditions = health.medications;
+  }
+
+  // Update emergency contact
+  if (emergencyContact) {
+    user.profile.emergencyContact = {
+      name: emergencyContact.name,
+      relationship: emergencyContact.relationship,
+      phone: emergencyContact.phone,
+    };
+  }
+
+  await user.save();
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponce(200, user.getProfile(), "Profile updated successfully")
     );
-  } catch (error) {
-    if (error.code === 11000) {
-      throw new ApiError(400, "Username or email already exists");
-    }
-    throw new ApiError(400, error.message);
-  }
 });
 
 // Update user avatar
